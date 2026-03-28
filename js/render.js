@@ -51,6 +51,44 @@ var Render = {
                 }
             }
         }
+
+        // Neon signs (Level 2)
+        if (lvl.neonSigns) {
+            for (var i = 0; i < lvl.neonSigns.length; i++) {
+                var ns = lvl.neonSigns[i];
+                var nx = ns.x - cam.x * 0.35;
+                var flicker = 0.6 + 0.4 * Math.sin(Game.frameCount * 0.04 + i * 2.3);
+                ctx.globalAlpha = flicker;
+                ctx.fillStyle = ns.color;
+                ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(ns.text, nx, ns.y);
+                // Glow effect
+                ctx.shadowColor = ns.color;
+                ctx.shadowBlur = 15;
+                ctx.fillText(ns.text, nx, ns.y);
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        // Spotlights (Level 3)
+        if (lvl.spotlights) {
+            for (var i = 0; i < lvl.spotlights.length; i++) {
+                var sl = lvl.spotlights[i];
+                var slx = sl.x - cam.x * 0.5;
+                var sway = Math.sin(Game.frameCount * 0.01 + i * 1.5) * 30;
+                ctx.globalAlpha = 0.08;
+                ctx.fillStyle = sl.color;
+                ctx.beginPath();
+                ctx.moveTo(slx + sway, 0);
+                ctx.lineTo(slx - 40 + sway * 0.5, canvas.height);
+                ctx.lineTo(slx + 40 + sway * 0.5, canvas.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
     },
 
     // ----- Draw platforms -----
@@ -63,17 +101,45 @@ var Render = {
             // Skip if off screen
             if (px + p.width < 0 || px > canvas.width) continue;
 
+            // Breakable shake
+            var shakeX = 0;
+            if (p.type === 'breakable' && p.breakTimer > 0) {
+                shakeX = (Math.random() - 0.5) * 6;
+            }
+
             // Platform fill
             ctx.fillStyle = p.color || '#C850C0';
-            ctx.fillRect(px, py, p.width, p.height);
+            ctx.fillRect(px + shakeX, py, p.width, p.height);
+
+            // Moving platform glow
+            if (p.type === 'moving') {
+                var mglow = 0.15 + 0.1 * Math.sin(Game.frameCount * 0.06);
+                ctx.fillStyle = 'rgba(255,255,0,' + mglow + ')';
+                ctx.fillRect(px - 2, py - 2, p.width + 4, p.height + 4);
+            }
+
+            // Breakable cracks
+            if (p.type === 'breakable') {
+                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(px + shakeX + p.width * 0.3, py);
+                ctx.lineTo(px + shakeX + p.width * 0.4, py + p.height * 0.6);
+                ctx.lineTo(px + shakeX + p.width * 0.5, py + p.height);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(px + shakeX + p.width * 0.7, py);
+                ctx.lineTo(px + shakeX + p.width * 0.6, py + p.height * 0.5);
+                ctx.stroke();
+            }
 
             // Top highlight
             ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.fillRect(px, py, p.width, 3);
+            ctx.fillRect(px + shakeX, py, p.width, 3);
 
             // Bottom shadow
             ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            ctx.fillRect(px, py + p.height - 2, p.width, 2);
+            ctx.fillRect(px + shakeX, py + p.height - 2, p.width, 2);
 
             // Sparkle dots on platforms
             if (p.height <= 20) {
@@ -283,6 +349,64 @@ var Render = {
                 ctx.beginPath();
                 ctx.ellipse(lookDir * 6, -e.height / 2 + 6, 4, 3, lookDir * 0.3, 0, Math.PI);
                 ctx.fill();
+
+                ctx.restore();
+            } else if (e.type === 'floater') {
+                // Sparkly floating orb - cannot be stomped
+                var glow = 0.5 + 0.5 * Math.sin(Game.frameCount * 0.08 + (e.phase || 0));
+                ctx.save();
+                ctx.translate(ex + e.width / 2, ey + e.height / 2);
+
+                // Outer glow
+                ctx.fillStyle = 'rgba(255,165,0,' + (glow * 0.3) + ')';
+                ctx.beginPath();
+                ctx.arc(0, 0, 20, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body - orange/yellow orb
+                ctx.fillStyle = '#FFA500';
+                ctx.beginPath();
+                ctx.arc(0, 0, e.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner highlight
+                ctx.fillStyle = '#FFD700';
+                ctx.beginPath();
+                ctx.arc(-3, -3, e.width / 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Sparkle rays
+                for (var r = 0; r < 4; r++) {
+                    var ra = Game.frameCount * 0.05 + (r * Math.PI / 2);
+                    var rx = Math.cos(ra) * (e.width / 2 + 4);
+                    var ry = Math.sin(ra) * (e.width / 2 + 4);
+                    ctx.fillStyle = 'rgba(255,255,0,' + glow + ')';
+                    ctx.beginPath();
+                    ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Eyes (cute but mischievous)
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.ellipse(-4, -2, 4, 3.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(4, -2, 4, 3.5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.arc(-3, -1, 2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(5, -1, 2, 0, Math.PI * 2);
+                ctx.fill();
+                // Smirk
+                ctx.strokeStyle = '#CC6600';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(1, 3, 4, 0.2, Math.PI - 0.2);
+                ctx.stroke();
 
                 ctx.restore();
             }

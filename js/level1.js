@@ -117,9 +117,23 @@ var LevelData = {
         var lvl = this.levels[n];
         if (!lvl) return;
 
-        // Deep copy platforms
+        // Deep copy platforms (including moving/breakable properties)
         Game.platforms = lvl.platforms.map(function(p) {
-            return { x: p.x, y: p.y, width: p.width, height: p.height, color: p.color, type: p.type };
+            var plat = { x: p.x, y: p.y, width: p.width, height: p.height, color: p.color, type: p.type };
+            if (p.type === 'moving') {
+                plat.moveAxis = p.moveAxis;
+                plat.moveMin = p.moveMin;
+                plat.moveMax = p.moveMax;
+                plat.moveSpeed = p.moveSpeed;
+                plat.origX = p.x;
+                plat.origY = p.y;
+                plat.movePhase = Math.random() * Math.PI * 2;
+            }
+            if (p.type === 'breakable') {
+                plat.breakTimer = 0;
+                plat.broken = false;
+            }
+            return plat;
         });
 
         // Deep copy collectibles
@@ -150,6 +164,22 @@ var LevelData = {
                 enemy.minX = e.minX;
                 enemy.maxX = e.maxX;
                 enemy.update = function() {
+                    this.x += this.vx * this.facing;
+                    if (this.x <= this.minX) { this.facing = 1; }
+                    if (this.x + this.width >= this.maxX) { this.facing = -1; }
+                    this.animFrame++;
+                };
+            } else if (e.type === 'floater') {
+                enemy.baseY = e.baseY;
+                enemy.amplitude = e.amplitude;
+                enemy.speed = e.speed;
+                enemy.phase = e.phase || 0;
+                enemy.vx = e.vx || 0.8;
+                enemy.minX = e.minX;
+                enemy.maxX = e.maxX;
+                enemy.update = function() {
+                    this.phase += this.speed;
+                    this.y = this.baseY + Math.sin(this.phase) * this.amplitude;
                     this.x += this.vx * this.facing;
                     if (this.x <= this.minX) { this.facing = 1; }
                     if (this.x + this.width >= this.maxX) { this.facing = -1; }

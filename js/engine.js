@@ -129,6 +129,31 @@ var Game = {
             }
         }
 
+        // Update platforms (moving & breakable)
+        for (var i = this.platforms.length - 1; i >= 0; i--) {
+            var p = this.platforms[i];
+            if (p.type === 'moving') {
+                p.movePhase += p.moveSpeed * 0.02;
+                if (p.moveAxis === 'x') {
+                    var mid = (p.moveMin + p.moveMax) / 2;
+                    var range = (p.moveMax - p.moveMin) / 2;
+                    p.x = mid + Math.sin(p.movePhase) * range;
+                } else {
+                    var mid = (p.moveMin + p.moveMax) / 2;
+                    var range = (p.moveMax - p.moveMin) / 2;
+                    p.y = mid + Math.sin(p.movePhase) * range;
+                }
+            }
+            if (p.type === 'breakable' && p.breakTimer > 0) {
+                p.breakTimer -= dt;
+                if (p.breakTimer <= 0) {
+                    p.broken = true;
+                    this.addParticles(p.x + p.width / 2, p.y + p.height / 2, 8, p.color || '#FF6347', 3);
+                    this.platforms.splice(i, 1);
+                }
+            }
+        }
+
         // Update player
         Player.update(dt);
 
@@ -176,6 +201,10 @@ var Game = {
                     p.vy = 0;
                     p.onGround = true;
                     p.doubleJumpAvail = true;
+                    // Trigger breakable platforms
+                    if (plat.type === 'breakable' && plat.breakTimer <= 0) {
+                        plat.breakTimer = 0.5; // breaks after 0.5s
+                    }
                 } else if (minOverlap === overlapBottom && p.vy < 0) {
                     // Hitting head on bottom of platform
                     p.y = plat.y + plat.height;
@@ -192,12 +221,17 @@ var Game = {
             }
         }
 
-        // Floor at canvas bottom
-        if (p.y + p.height >= canvas.height) {
-            p.y = canvas.height - p.height;
-            p.vy = 0;
-            p.onGround = true;
-            p.doubleJumpAvail = true;
+        // Fell off the bottom - take damage and respawn
+        if (p.y > canvas.height + 50) {
+            Player.takeDamage();
+            if (Game.state === 'playing') {
+                // Respawn at start of level
+                p.x = 100;
+                p.y = 300;
+                p.vy = 0;
+                p.vx = 0;
+                Game.camera.x = 0;
+            }
         }
 
         // Left / right level bounds
@@ -214,6 +248,9 @@ var Game = {
                 if (c.type === 'star') {
                     this.starsCollected++;
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 12, '#FFD700', 4);
+                } else if (c.type === 'heart') {
+                    this.lives = Math.min(this.lives + 1, 5);
+                    this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 15, '#FF4444', 4);
                 } else if (c.type === 'musicToken') {
                     this.musicTokens[this.level] = true;
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 20, '#FF69B4', 5);
@@ -247,13 +284,22 @@ var Game = {
         // --- Player vs portal (end of level) ---
         var portal = { x: this.portalX, y: canvas.height - 100, width: 40, height: 60 };
         if (rectsOverlap(p, portal)) {
+            var powers = ['Star Spin', 'Glitter Burst', 'Encore Dash'];
             if (this.level < 2) {
                 this.state = 'levelComplete';
                 Player.state = 'victory';
+                // Unlock next dance power
+                var nextPower = powers[this.level + 1];
+                if (nextPower && this.unlockedPowers.indexOf(nextPower) === -1) {
+                    this.unlockedPowers.push(nextPower);
+                }
                 this.addParticles(p.x + p.width / 2, p.y + p.height / 2, 30, '#FFD700', 6);
             } else {
                 this.state = 'victory';
                 Player.state = 'victory';
+                if (this.unlockedPowers.indexOf('Encore Dash') === -1) {
+                    this.unlockedPowers.push('Encore Dash');
+                }
                 this.addParticles(p.x + p.width / 2, p.y + p.height / 2, 50, '#FF69B4', 8);
             }
         }
