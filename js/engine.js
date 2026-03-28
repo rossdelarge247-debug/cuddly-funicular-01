@@ -96,6 +96,7 @@ var Game = {
 
         Player.reset(100, 400);
         this.state = 'playing';
+        Audio.startBGM(n);
     },
 
     // Minimal fallback level when LevelData is not loaded yet
@@ -248,12 +249,18 @@ var Game = {
                 if (c.type === 'star') {
                     this.starsCollected++;
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 12, '#FFD700', 4);
+                    Audio.playCollectStar();
                 } else if (c.type === 'heart') {
                     this.lives = Math.min(this.lives + 1, 5);
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 15, '#FF4444', 4);
+                    Audio.playCollectHeart();
                 } else if (c.type === 'musicToken') {
                     this.musicTokens[this.level] = true;
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 20, '#FF69B4', 5);
+                    Audio.playCollectToken();
+                } else if (c.type === 'note') {
+                    this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 8, c.color || '#44FF44', 3);
+                    Audio.playCollectNote();
                 } else {
                     this.addParticles(c.x + c.width / 2, c.y + c.height / 2, 8, c.color || '#44FF44', 3);
                 }
@@ -273,6 +280,7 @@ var Game = {
                         p.vy = -8; // bounce
                         this.score += (e.points || 200);
                         this.addParticles(e.x + e.width / 2, e.y + e.height / 2, 10, '#FF4444', 4);
+                        Audio.playEnemyBounce();
                     } else {
                         // Player takes damage
                         Player.takeDamage();
@@ -288,12 +296,13 @@ var Game = {
             if (this.level < 2) {
                 this.state = 'levelComplete';
                 Player.state = 'victory';
-                // Unlock next dance power
                 var nextPower = powers[this.level + 1];
                 if (nextPower && this.unlockedPowers.indexOf(nextPower) === -1) {
                     this.unlockedPowers.push(nextPower);
                 }
                 this.addParticles(p.x + p.width / 2, p.y + p.height / 2, 30, '#FFD700', 6);
+                Audio.stopBGM();
+                Audio.playLevelComplete();
             } else {
                 this.state = 'victory';
                 Player.state = 'victory';
@@ -301,6 +310,8 @@ var Game = {
                     this.unlockedPowers.push('Encore Dash');
                 }
                 this.addParticles(p.x + p.width / 2, p.y + p.height / 2, 50, '#FF69B4', 8);
+                Audio.stopBGM();
+                Audio.playLevelComplete();
             }
         }
     },
@@ -498,11 +509,13 @@ var Player = {
             this.onGround = false;
             this.state = 'jump';
             Game.addParticles(this.x + this.width / 2, this.y + this.height, 5, '#FFFFFF', 2);
+            Audio.playJump();
         } else if (this.doubleJumpAvail) {
             this.vy = this.DOUBLE_JUMP_VEL;
             this.doubleJumpAvail = false;
             this.state = 'jump';
             Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 8, '#DDA0DD', 3);
+            Audio.playDoubleJump();
         }
     },
 
@@ -515,11 +528,11 @@ var Player = {
         Game.specialCooldown = 3; // 3 second cooldown
 
         this.state = 'dance';
-        this.animTimer = 0.8; // dance lasts 0.8s
+        this.animTimer = 0.8;
         this.invincible = true;
         this.invincibleTimer = 1.0;
 
-        // Burst of star particles
+        Audio.playDancePower();
         Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 25, '#FFD700', 6);
         Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 15, '#FF69B4', 5);
 
@@ -556,9 +569,12 @@ var Player = {
         this.vx = -this.facing * 4;
 
         Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 10, '#FF0000', 3);
+        Audio.playHurt();
 
         if (Game.lives <= 0) {
             Game.state = 'gameOver';
+            Audio.stopBGM();
+            Audio.playGameOver();
         }
     },
 
@@ -936,6 +952,8 @@ function _drawStar(ctx, cx, cy, radius, points) {
 
         // --- Enter: context-dependent ---
         if (e.key === 'Enter') {
+            Audio.init();
+            Audio.playMenuSelect();
             switch (Game.state) {
                 case 'menu':
                     Game.startLevel(0);
