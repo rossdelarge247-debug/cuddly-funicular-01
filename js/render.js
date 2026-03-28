@@ -91,65 +91,116 @@ var Render = {
         }
     },
 
-    // ----- Draw platforms -----
+    // ----- Draw platforms (Sonic-style checkerboard + bold outlines) -----
     drawPlatforms: function(ctx, cam) {
         for (var i = 0; i < Game.platforms.length; i++) {
             var p = Game.platforms[i];
             var px = p.x - cam.x;
             var py = p.y - cam.y;
 
-            // Skip if off screen
-            if (px + p.width < 0 || px > canvas.width) continue;
+            if (px + p.width < -10 || px > canvas.width + 10) continue;
 
-            // Breakable shake
             var shakeX = 0;
             if (p.type === 'breakable' && p.breakTimer > 0) {
                 shakeX = (Math.random() - 0.5) * 6;
             }
 
-            // Platform fill
-            ctx.fillStyle = p.color || '#C850C0';
-            ctx.fillRect(px + shakeX, py, p.width, p.height);
+            var dpx = px + shakeX;
 
-            // Moving platform glow
-            if (p.type === 'moving') {
-                var mglow = 0.15 + 0.1 * Math.sin(Game.frameCount * 0.06);
-                ctx.fillStyle = 'rgba(255,255,0,' + mglow + ')';
-                ctx.fillRect(px - 2, py - 2, p.width + 4, p.height + 4);
-            }
+            // --- Sonic-style platform rendering ---
+            if (p.height >= 40) {
+                // Ground platform: checkerboard pattern
+                var baseColor = p.color || '#C850C0';
+                var darkColor = this._darkenColor(baseColor, 0.7);
+                var tileSize = 16;
 
-            // Breakable cracks
-            if (p.type === 'breakable') {
-                ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-                ctx.lineWidth = 1;
+                // Clip to platform bounds
+                ctx.save();
                 ctx.beginPath();
-                ctx.moveTo(px + shakeX + p.width * 0.3, py);
-                ctx.lineTo(px + shakeX + p.width * 0.4, py + p.height * 0.6);
-                ctx.lineTo(px + shakeX + p.width * 0.5, py + p.height);
+                ctx.rect(dpx, py, p.width, p.height);
+                ctx.clip();
+
+                // Draw checkerboard
+                var startTileX = Math.floor(p.x / tileSize);
+                for (var tx = -1; tx <= Math.ceil(p.width / tileSize); tx++) {
+                    for (var ty = 0; ty <= Math.ceil(p.height / tileSize); ty++) {
+                        var isLight = (startTileX + tx + ty) % 2 === 0;
+                        ctx.fillStyle = isLight ? baseColor : darkColor;
+                        ctx.fillRect(dpx + tx * tileSize, py + ty * tileSize, tileSize, tileSize);
+                    }
+                }
+
+                // Bold top edge (grass-like strip)
+                var topGrad = ctx.createLinearGradient(0, py, 0, py + 8);
+                topGrad.addColorStop(0, this._lightenColor(baseColor, 1.3));
+                topGrad.addColorStop(1, baseColor);
+                ctx.fillStyle = topGrad;
+                ctx.fillRect(dpx, py, p.width, 8);
+
+                // Top highlight line
+                ctx.fillStyle = 'rgba(255,255,255,0.35)';
+                ctx.fillRect(dpx, py, p.width, 2);
+
+                ctx.restore();
+
+                // Bold outline
+                ctx.strokeStyle = '#1A0A2E';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(dpx, py, p.width, p.height);
+
+            } else {
+                // Floating platform: rounded with bold outline
+
+                // Moving platform glow
+                if (p.type === 'moving') {
+                    var mglow = 0.2 + 0.15 * Math.sin(Game.frameCount * 0.06);
+                    ctx.fillStyle = 'rgba(255,255,0,' + mglow + ')';
+                    _roundRect(ctx, dpx - 3, py - 3, p.width + 6, p.height + 6, 6);
+                    ctx.fill();
+                }
+
+                // Platform body
+                var platGrad = ctx.createLinearGradient(0, py, 0, py + p.height);
+                platGrad.addColorStop(0, this._lightenColor(p.color || '#FF69B4', 1.2));
+                platGrad.addColorStop(1, this._darkenColor(p.color || '#FF69B4', 0.8));
+                ctx.fillStyle = platGrad;
+                _roundRect(ctx, dpx, py, p.width, p.height, 5);
+                ctx.fill();
+
+                // Bold outline
+                ctx.strokeStyle = '#1A0A2E';
+                ctx.lineWidth = 2;
+                _roundRect(ctx, dpx, py, p.width, p.height, 5);
                 ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(px + shakeX + p.width * 0.7, py);
-                ctx.lineTo(px + shakeX + p.width * 0.6, py + p.height * 0.5);
-                ctx.stroke();
-            }
 
-            // Top highlight
-            ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.fillRect(px + shakeX, py, p.width, 3);
+                // Top shine
+                ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                _roundRect(ctx, dpx + 2, py + 1, p.width - 4, 4, 2);
+                ctx.fill();
 
-            // Bottom shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.2)';
-            ctx.fillRect(px + shakeX, py + p.height - 2, p.width, 2);
+                // Breakable cracks
+                if (p.type === 'breakable') {
+                    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(dpx + p.width * 0.3, py);
+                    ctx.lineTo(dpx + p.width * 0.45, py + p.height * 0.7);
+                    ctx.lineTo(dpx + p.width * 0.5, py + p.height);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(dpx + p.width * 0.7, py);
+                    ctx.lineTo(dpx + p.width * 0.55, py + p.height * 0.6);
+                    ctx.stroke();
+                }
 
-            // Sparkle dots on platforms
-            if (p.height <= 20) {
-                var sparkle = 0.3 + 0.3 * Math.sin(Game.frameCount * 0.05 + p.x * 0.01);
+                // Sparkle dots
+                var sparkle = 0.3 + 0.4 * Math.sin(Game.frameCount * 0.05 + p.x * 0.01);
                 ctx.fillStyle = 'rgba(255,255,255,' + sparkle + ')';
                 ctx.beginPath();
-                ctx.arc(px + p.width * 0.3, py + 4, 2, 0, Math.PI * 2);
+                ctx.arc(dpx + p.width * 0.25, py + p.height * 0.4, 2, 0, Math.PI * 2);
                 ctx.fill();
                 ctx.beginPath();
-                ctx.arc(px + p.width * 0.7, py + 4, 2, 0, Math.PI * 2);
+                ctx.arc(dpx + p.width * 0.75, py + p.height * 0.4, 2, 0, Math.PI * 2);
                 ctx.fill();
             }
         }
@@ -170,20 +221,28 @@ var Render = {
             var bob = Math.sin(Game.frameCount * 0.06 + c.x * 0.01) * 3;
 
             if (c.type === 'star') {
-                // Golden spinning star
+                // Sonic-style spinning ring/star
                 ctx.save();
                 ctx.translate(cx, cy + bob);
-                ctx.rotate(Game.frameCount * 0.03);
+                var starAngle = Game.frameCount * 0.05;
+                ctx.rotate(starAngle);
+                // Outer glow
+                ctx.fillStyle = 'rgba(255,215,0,0.2)';
+                ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.fill();
+                // Bold star
                 ctx.fillStyle = '#FFD700';
-                _drawStar(ctx, 0, 0, 10, 5);
-                ctx.fillStyle = '#FFF8DC';
-                _drawStar(ctx, 0, 0, 5, 5);
+                _drawStar(ctx, 0, 0, 12, 5);
+                ctx.strokeStyle = '#B8860B';
+                ctx.lineWidth = 1.5;
+                _drawStar(ctx, 0, 0, 12, 5);
+                ctx.stroke();
+                // Inner star highlight
+                ctx.fillStyle = '#FFFACD';
+                _drawStar(ctx, 0, 0, 6, 5);
+                // Center shine
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath(); ctx.arc(-1, -1, 2, 0, Math.PI * 2); ctx.fill();
                 ctx.restore();
-                // Glow
-                ctx.fillStyle = 'rgba(255,215,0,0.15)';
-                ctx.beginPath();
-                ctx.arc(cx, cy + bob, 14, 0, Math.PI * 2);
-                ctx.fill();
             } else if (c.type === 'note') {
                 // Music note
                 ctx.fillStyle = '#FF69B4';
@@ -263,32 +322,40 @@ var Render = {
             if (ex + e.width < -10 || ex > canvas.width + 10) continue;
 
             if (e.type === 'bouncer') {
-                // Silly bouncing pink blob
+                // Sonic-style bouncing badnik
                 var squish = Math.sin(e.phase || Game.frameCount * 0.06) * 0.15;
                 ctx.save();
                 ctx.translate(ex + e.width / 2, ey + e.height);
                 ctx.scale(1 + squish, 1 - squish);
 
-                // Body
+                // Body with bold outline
                 ctx.fillStyle = '#E855A0';
+                ctx.strokeStyle = '#2A1040';
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.ellipse(0, -e.height / 2, e.width / 2 + 2, e.height / 2 + 2, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                // Body gradient shine
+                var bGrad = ctx.createRadialGradient(-4, -e.height / 2 - 4, 2, 0, -e.height / 2, e.width / 2);
+                bGrad.addColorStop(0, 'rgba(255,255,255,0.3)');
+                bGrad.addColorStop(1, 'rgba(255,255,255,0)');
+                ctx.fillStyle = bGrad;
                 ctx.beginPath();
                 ctx.ellipse(0, -e.height / 2, e.width / 2, e.height / 2, 0, 0, Math.PI * 2);
                 ctx.fill();
 
-                // Highlight
-                ctx.fillStyle = 'rgba(255,255,255,0.2)';
-                ctx.beginPath();
-                ctx.ellipse(-4, -e.height / 2 - 4, 6, 4, -0.3, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Eyes
+                // Eyes with outlines
                 ctx.fillStyle = '#FFF';
+                ctx.strokeStyle = '#2A1040';
+                ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.ellipse(-6, -e.height / 2 - 2, 5, 5, 0, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.ellipse(-6, -e.height / 2 - 2, 6, 6, 0, 0, Math.PI * 2);
+                ctx.fill(); ctx.stroke();
                 ctx.beginPath();
-                ctx.ellipse(6, -e.height / 2 - 2, 5, 5, 0, 0, Math.PI * 2);
-                ctx.fill();
+                ctx.ellipse(6, -e.height / 2 - 2, 6, 6, 0, 0, Math.PI * 2);
+                ctx.fill(); ctx.stroke();
                 // Pupils
                 ctx.fillStyle = '#333';
                 ctx.beginPath();
@@ -727,5 +794,24 @@ var Render = {
         ctx.textBaseline = 'middle';
         ctx.fillText(text, x + w / 2, y + h / 2);
         ctx.textBaseline = 'alphabetic';
+    },
+
+    // ----- Color helpers for Sonic-style gradients -----
+    _darkenColor: function(hex, factor) {
+        var r = parseInt(hex.slice(1,3), 16);
+        var g = parseInt(hex.slice(3,5), 16);
+        var b = parseInt(hex.slice(5,7), 16);
+        r = Math.floor(r * factor); g = Math.floor(g * factor); b = Math.floor(b * factor);
+        return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    },
+
+    _lightenColor: function(hex, factor) {
+        var r = parseInt(hex.slice(1,3), 16);
+        var g = parseInt(hex.slice(3,5), 16);
+        var b = parseInt(hex.slice(5,7), 16);
+        r = Math.min(255, Math.floor(r * factor));
+        g = Math.min(255, Math.floor(g * factor));
+        b = Math.min(255, Math.floor(b * factor));
+        return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
     }
 };

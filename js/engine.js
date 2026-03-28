@@ -275,11 +275,13 @@ var Game = {
                 if (rectsOverlap(p, e)) {
                     // Stomp from above?
                     if (p.vy > 0 && p.y + p.height - e.y < 16) {
-                        // Stomp kill
+                        // Stomp kill - Sonic-style bounce off enemy
                         e.alive = false;
-                        p.vy = -8; // bounce
+                        // Higher bounce if holding jump, keep horizontal momentum
+                        p.vy = Game.keys['ArrowUp'] || Game.keys['w'] || Game.keys[' '] ? -11 : -7;
+                        p.doubleJumpAvail = true; // regain double jump
                         this.score += (e.points || 200);
-                        this.addParticles(e.x + e.width / 2, e.y + e.height / 2, 10, '#FF4444', 4);
+                        this.addParticles(e.x + e.width / 2, e.y + e.height / 2, 12, '#FF4444', 5);
                         Audio.playEnemyBounce();
                     } else {
                         // Player takes damage
@@ -399,12 +401,24 @@ var Player = {
     invincibleTimer: 0,
     doubleJumpAvail: true,
 
-    // Constants
-    GRAVITY: 0.6,
-    MAX_FALL: 12,
-    SPEED: 5,
-    JUMP_VEL: -12,
-    DOUBLE_JUMP_VEL: -10,
+    // Sonic-style physics constants
+    GRAVITY: 0.28,
+    MAX_FALL: 16,
+    ACCEL: 0.45,            // ground acceleration
+    DECEL: 0.5,             // braking deceleration (turning around)
+    FRICTION: 0.35,         // passive ground friction when no input
+    AIR_ACCEL: 0.25,        // air acceleration (less control in air)
+    AIR_DRAG: 0.02,         // subtle air resistance
+    TOP_SPEED: 7,           // normal top speed
+    MAX_SPEED: 12,          // absolute max (with momentum)
+    JUMP_VEL: -10,
+    DOUBLE_JUMP_VEL: -8.5,
+    MIN_JUMP_VEL: -4,       // variable jump height (release early)
+    jumpHeld: false,         // tracking if jump key is held
+    speedTimer: 0,           // time spent at top speed -> builds momentum
+    isSpinning: false,       // Sonic-style spin when jumping at speed
+    skidding: false,         // braking animation flag
+    groundSpeed: 0,          // separate ground speed for Sonic feel
 
     // ---------------------------------------------------------------
     //  reset
@@ -422,6 +436,11 @@ var Player = {
         this.invincible = false;
         this.invincibleTimer = 0;
         this.doubleJumpAvail = true;
+        this.jumpHeld = false;
+        this.speedTimer = 0;
+        this.isSpinning = false;
+        this.skidding = false;
+        this.groundSpeed = 0;
     },
 
     // ---------------------------------------------------------------
@@ -443,6 +462,14 @@ var Player = {
             if (this.animTimer <= 0) {
                 this.state = 'idle';
             }
+            // Still apply physics during hurt
+            this.vy += this.GRAVITY;
+            if (this.vy > this.MAX_FALL) this.vy = this.MAX_FALL;
+            this.vx *= 0.95;
+            this.x += this.vx;
+            this.y += this.vy;
+            this._animate(dt);
+            return;
         }
 
         // --- Dance / victory: no movement ---
@@ -451,23 +478,78 @@ var Player = {
             if (this.state === 'dance' && this.animTimer <= 0) {
                 this.state = 'idle';
             }
-            // Still apply gravity during dance
             this.vy += this.GRAVITY;
             if (this.vy > this.MAX_FALL) this.vy = this.MAX_FALL;
+            this.vx *= 0.92;
+            this.x += this.vx;
             this.y += this.vy;
             this._animate(dt);
             return;
         }
 
-        // --- Horizontal input ---
+        // --- Horizontal input (Sonic-style acceleration) ---
         var moveDir = 0;
-        if (this.state !== 'hurt') {
-            if (Game.keys['ArrowLeft'] || Game.keys['a']) moveDir = -1;
-            if (Game.keys['ArrowRight'] || Game.keys['d']) moveDir = 1;
+        if (Game.keys['ArrowLeft'] || Game.keys['a']) moveDir = -1;
+        if (Game.keys['ArrowRight'] || Game.keys['d']) moveDir = 1;
+
+        this.skidding = false;
+
+        if (this.onGround) {
+            // Ground physics
+            if (moveDir !== 0) {
+                // Check if turning around (skid)
+                if (moveDir !== Math.sign(this.vx) && Math.abs(this.vx) > 1.5) {
+                    // Skidding / braking
+                    this.vx += moveDir * this.DECEL;
+                    this.skidding = true;
+                    // Skid particles
+                    if (Game.frameCount % 3 === 0) {
+                        Game.addParticles(this.x + this.width / 2, this.y + this.height, 2, '#CCAA77', 1.5);
+                    }
+                } else {
+                    // Normal acceleration
+                    this.vx += moveDir * this.ACCEL;
+                }
+                this.facing = moveDir;
+            } else {
+                // Friction when no input
+                if (Math.abs(this.vx) < this.FRICTION) {
+                    this.vx = 0;
+                } else {
+                    this.vx -= Math.sign(this.vx) * this.FRICTION;
+                }
+            }
+
+            // Speed momentum: running at top speed builds up to higher max
+            if (Math.abs(this.vx) >= this.TOP_SPEED - 0.5) {
+                this.speedTimer += dt;
+            } else {
+                this.speedTimer = Math.max(0, this.speedTimer - dt * 2);
+            }
+            var currentMax = this.TOP_SPEED + Math.min(this.speedTimer * 1.5, this.MAX_SPEED - this.TOP_SPEED);
+            if (Math.abs(this.vx) > currentMax) {
+                this.vx = Math.sign(this.vx) * currentMax;
+            }
+
+            this.groundSpeed = Math.abs(this.vx);
+        } else {
+            // Air physics - less control, some drag
+            if (moveDir !== 0) {
+                this.vx += moveDir * this.AIR_ACCEL;
+                this.facing = moveDir;
+            }
+            // Air drag (subtle)
+            this.vx *= (1 - this.AIR_DRAG);
+            // Cap air speed
+            if (Math.abs(this.vx) > this.MAX_SPEED) {
+                this.vx = Math.sign(this.vx) * this.MAX_SPEED;
+            }
         }
 
-        this.vx = moveDir * this.SPEED;
-        if (moveDir !== 0) this.facing = moveDir;
+        // --- Variable jump height (release to cut jump short) ---
+        if (!this.jumpHeld && this.vy < this.MIN_JUMP_VEL) {
+            this.vy = this.MIN_JUMP_VEL;
+        }
 
         // --- Apply gravity ---
         this.vy += this.GRAVITY;
@@ -477,15 +559,35 @@ var Player = {
         this.x += this.vx;
         this.y += this.vy;
 
-        // --- Determine visual state ---
-        if (this.state !== 'hurt') {
-            if (!this.onGround) {
-                this.state = this.vy < 0 ? 'jump' : 'fall';
-            } else if (Math.abs(this.vx) > 0.1) {
-                this.state = 'run';
-            } else {
-                this.state = 'idle';
+        // --- Spin state: spinning ball when jumping at high speed ---
+        this.isSpinning = !this.onGround && this.groundSpeed > 4;
+
+        // --- Speed lines particles ---
+        if (this.onGround && Math.abs(this.vx) > this.TOP_SPEED) {
+            if (Game.frameCount % 2 === 0) {
+                Game.addParticles(
+                    this.x + this.width / 2 - this.facing * 16,
+                    this.y + this.height * 0.4 + (Math.random() - 0.5) * 20,
+                    1, 'rgba(255,255,255,0.5)', 0.5
+                );
             }
+        }
+
+        // --- Determine visual state ---
+        if (!this.onGround) {
+            if (this.isSpinning) {
+                this.state = 'spin';
+            } else {
+                this.state = this.vy < 0 ? 'jump' : 'fall';
+            }
+        } else if (this.skidding) {
+            this.state = 'skid';
+        } else if (Math.abs(this.vx) > this.TOP_SPEED) {
+            this.state = 'sprint';
+        } else if (Math.abs(this.vx) > 0.3) {
+            this.state = 'run';
+        } else {
+            this.state = 'idle';
         }
 
         this._animate(dt);
@@ -505,16 +607,20 @@ var Player = {
     jump: function () {
         if (this.state === 'hurt' || this.state === 'dance') return;
         if (this.onGround) {
-            this.vy = this.JUMP_VEL;
+            // Jump power scales slightly with speed
+            var speedBonus = Math.abs(this.vx) * 0.15;
+            this.vy = this.JUMP_VEL - speedBonus;
             this.onGround = false;
+            this.jumpHeld = true;
             this.state = 'jump';
-            Game.addParticles(this.x + this.width / 2, this.y + this.height, 5, '#FFFFFF', 2);
+            Game.addParticles(this.x + this.width / 2, this.y + this.height, 6, '#FFFFFF', 2.5);
             Audio.playJump();
         } else if (this.doubleJumpAvail) {
             this.vy = this.DOUBLE_JUMP_VEL;
             this.doubleJumpAvail = false;
+            this.jumpHeld = true;
             this.state = 'jump';
-            Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 8, '#DDA0DD', 3);
+            Game.addParticles(this.x + this.width / 2, this.y + this.height / 2, 10, '#DDA0DD', 3);
             Audio.playDoubleJump();
         }
     },
@@ -579,22 +685,86 @@ var Player = {
     },
 
     // ---------------------------------------------------------------
-    //  draw - Maddie as a cute cartoon pop-star character
+    //  draw - Maddie (Sonic-style bold outlines, spin ball, dynamic poses)
     // ---------------------------------------------------------------
     draw: function (ctx, cam) {
-        // If invincible, blink every few frames
         if (this.invincible && Math.floor(Game.frameCount / 3) % 2 === 0) {
-            return; // skip draw for blink effect
+            return;
         }
 
-        var sx = this.x - cam.x;   // screen x
-        var sy = this.y - cam.y;   // screen y
-        var f = this.facing;        // -1 left, 1 right
-        var frame = this.animFrame;
+        var sx = this.x - cam.x;
+        var sy = this.y - cam.y;
+        var f = this.facing;
+        var spd = Math.abs(this.vx);
+        var OUTLINE = '#2A1040'; // bold dark outline color
+        var OW = 2; // outline width
 
         ctx.save();
 
-        // Flip for facing direction: translate to center then scale
+        // --- Speed afterimages when sprinting ---
+        if (this.state === 'sprint' || (this.state === 'spin' && spd > 5)) {
+            for (var g = 3; g > 0; g--) {
+                ctx.globalAlpha = 0.08 * g;
+                ctx.fillStyle = '#BA55D3';
+                ctx.beginPath();
+                ctx.ellipse(sx + 16 - f * g * 8, sy + 24, 14, 22, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // --- Spin ball mode (Sonic-style) ---
+        if (this.state === 'spin') {
+            var spinCx = sx + this.width / 2;
+            var spinCy = sy + this.height / 2;
+            var spinR = 16;
+            var spinAngle = Game.frameCount * 0.4 * f;
+
+            // Outline
+            ctx.strokeStyle = OUTLINE;
+            ctx.lineWidth = OW + 1;
+            ctx.beginPath();
+            ctx.arc(spinCx, spinCy, spinR + 1, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Main ball - purple gradient
+            var ballGrad = ctx.createRadialGradient(spinCx - 4, spinCy - 4, 2, spinCx, spinCy, spinR);
+            ballGrad.addColorStop(0, '#D070FF');
+            ballGrad.addColorStop(1, '#6A1B9A');
+            ctx.fillStyle = ballGrad;
+            ctx.beginPath();
+            ctx.arc(spinCx, spinCy, spinR, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Spin streaks (hair flash)
+            for (var ss = 0; ss < 3; ss++) {
+                var sa = spinAngle + (ss / 3) * Math.PI * 2;
+                ctx.strokeStyle = '#FFD700';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.arc(spinCx, spinCy, spinR - 2, sa, sa + 0.8);
+                ctx.stroke();
+            }
+
+            // Star highlight
+            ctx.fillStyle = '#FFD700';
+            _drawStar(ctx, spinCx, spinCy, 5, 5);
+
+            // Motion blur lines
+            for (var ml = 0; ml < 3; ml++) {
+                ctx.strokeStyle = 'rgba(186,85,211,' + (0.4 - ml * 0.12) + ')';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(spinCx - f * (20 + ml * 10), spinCy - 8 + ml * 8);
+                ctx.lineTo(spinCx - f * (30 + ml * 12), spinCy - 8 + ml * 8);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+            return;
+        }
+
+        // Flip for facing direction
         if (f === -1) {
             ctx.translate(sx + this.width / 2, 0);
             ctx.scale(-1, 1);
@@ -603,27 +773,37 @@ var Player = {
         }
 
         // --- Animation offsets ---
-        var bounce = 0;
-        var legOffset = 0;
-        var armAngle = 0;
-        var headTilt = 0;
+        var bounce = 0, legOffset = 0, armAngle = 0, headTilt = 0, bodyLean = 0;
+        var runSpeed = Math.min(spd / this.TOP_SPEED, 1); // 0-1 normalized speed
 
         switch (this.state) {
             case 'idle':
                 bounce = Math.sin(Game.frameCount * 0.08) * 2;
                 break;
             case 'run':
-                bounce = Math.sin(Game.frameCount * 0.3) * 2;
-                legOffset = Math.sin(Game.frameCount * 0.3) * 6;
-                armAngle = Math.sin(Game.frameCount * 0.3) * 0.4;
+                bounce = Math.sin(Game.frameCount * (0.2 + runSpeed * 0.3)) * (1.5 + runSpeed);
+                legOffset = Math.sin(Game.frameCount * (0.2 + runSpeed * 0.3)) * (4 + runSpeed * 5);
+                armAngle = Math.sin(Game.frameCount * (0.2 + runSpeed * 0.3)) * (0.3 + runSpeed * 0.4);
+                bodyLean = runSpeed * 0.15;
+                break;
+            case 'sprint':
+                bounce = Math.sin(Game.frameCount * 0.5) * 1;
+                legOffset = Math.sin(Game.frameCount * 0.5) * 10;
+                armAngle = Math.sin(Game.frameCount * 0.5) * 0.7;
+                bodyLean = 0.25;
+                break;
+            case 'skid':
+                bounce = 0;
+                bodyLean = -0.2;
                 break;
             case 'jump':
                 bounce = -3;
-                armAngle = -0.6;
+                armAngle = -0.7;
                 break;
             case 'fall':
                 bounce = 2;
-                armAngle = 0.3;
+                armAngle = 0.4;
+                legOffset = 3;
                 break;
             case 'dance':
                 bounce = Math.sin(Game.frameCount * 0.2) * 4;
@@ -639,236 +819,263 @@ var Player = {
                 break;
         }
 
-        var by = sy + bounce; // bounced y
+        var by = sy + bounce;
 
-        // ===== LEGS =====
+        // Apply body lean for speed
+        ctx.save();
+        if (bodyLean !== 0) {
+            ctx.translate(sx + 16, by + 48);
+            ctx.rotate(bodyLean);
+            ctx.translate(-(sx + 16), -(by + 48));
+        }
+
+        // ===== LEGS with outlines =====
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = OW;
         // Left leg
-        ctx.fillStyle = '#D8A0E0'; // light purple leggings
+        ctx.fillStyle = '#D8A0E0';
         ctx.fillRect(sx + 8, by + 36 - Math.max(0, legOffset), 6, 12 + Math.max(0, legOffset));
+        ctx.strokeRect(sx + 8, by + 36 - Math.max(0, legOffset), 6, 12 + Math.max(0, legOffset));
         // Right leg
         ctx.fillRect(sx + 18, by + 36 + Math.min(0, legOffset), 6, 12 - Math.min(0, legOffset));
+        ctx.strokeRect(sx + 18, by + 36 + Math.min(0, legOffset), 6, 12 - Math.min(0, legOffset));
 
-        // Shoes - sparkly pink
-        ctx.fillStyle = '#FF69B4';
-        ctx.fillRect(sx + 6, by + 44 - Math.max(0, legOffset), 10, 4);
-        ctx.fillRect(sx + 16, by + 44 + Math.min(0, legOffset), 10, 4);
-
-        // ===== BODY (torso) =====
-        // Main outfit - purple/pink gradient look
-        ctx.fillStyle = '#9B30FF'; // vivid purple
-        // Torso
-        _roundRect(ctx, sx + 6, by + 18, 20, 20, 3);
-        ctx.fill();
-
-        // Outfit highlight / sparkle overlay
-        ctx.fillStyle = '#BA55D3'; // medium orchid accent
-        _roundRect(ctx, sx + 8, by + 20, 16, 8, 2);
-        ctx.fill();
-
-        // Star on outfit
+        // Shoes with outlines - bold red (Sonic-style)
+        ctx.fillStyle = '#FF2060';
+        var shoeL = {x: sx + 5, y: by + 44 - Math.max(0, legOffset), w: 12, h: 5};
+        var shoeR = {x: sx + 15, y: by + 44 + Math.min(0, legOffset), w: 12, h: 5};
+        _roundRect(ctx, shoeL.x, shoeL.y, shoeL.w, shoeL.h, 2); ctx.fill(); ctx.stroke();
+        _roundRect(ctx, shoeR.x, shoeR.y, shoeR.w, shoeR.h, 2); ctx.fill(); ctx.stroke();
+        // Shoe stripe
         ctx.fillStyle = '#FFD700';
-        _drawStar(ctx, sx + 16, by + 28, 4, 5);
+        ctx.fillRect(shoeL.x + 2, shoeL.y + 1, shoeL.w - 4, 2);
+        ctx.fillRect(shoeR.x + 2, shoeR.y + 1, shoeR.w - 4, 2);
 
-        // Sparkle dots on outfit
-        var sparklePhase = Game.frameCount * 0.1;
-        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 + 0.5 * Math.sin(sparklePhase)) + ')';
-        ctx.beginPath();
-        ctx.arc(sx + 10, by + 24, 1, 0, Math.PI * 2);
+        // Skid dust
+        if (this.state === 'skid') {
+            for (var d = 0; d < 3; d++) {
+                ctx.fillStyle = 'rgba(200,170,120,' + (0.5 - d * 0.15) + ')';
+                ctx.beginPath();
+                ctx.arc(sx + 16 + (d * 6), by + 48, 3 + d, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // ===== BODY with outline =====
+        ctx.fillStyle = '#9B30FF';
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = OW;
+        _roundRect(ctx, sx + 5, by + 17, 22, 21, 4);
         ctx.fill();
-        ctx.beginPath();
-        ctx.arc(sx + 22, by + 26, 1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 + 0.5 * Math.sin(sparklePhase + 2)) + ')';
-        ctx.beginPath();
-        ctx.arc(sx + 14, by + 34, 1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Belt / waist accent
+        ctx.fillStyle = '#FFD700';
+        ctx.fillRect(sx + 6, by + 34, 20, 3);
+        ctx.strokeStyle = OUTLINE;
+        ctx.strokeRect(sx + 6, by + 34, 20, 3);
+
+        // Outfit highlight
+        ctx.fillStyle = '#BA55D3';
+        _roundRect(ctx, sx + 7, by + 19, 18, 8, 2);
         ctx.fill();
 
-        // ===== ARMS =====
+        // Star emblem on chest (bigger, bolder)
+        ctx.fillStyle = '#FFD700';
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 1.5;
+        _drawStar(ctx, sx + 16, by + 27, 5, 5);
+        ctx.stroke();
+
+        // Sparkle dots
+        var sp = Game.frameCount * 0.12;
+        ctx.fillStyle = 'rgba(255,255,255,' + (0.5 + 0.5 * Math.sin(sp)) + ')';
+        ctx.beginPath(); ctx.arc(sx + 10, by + 23, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx + 22, by + 25, 1.5, 0, Math.PI * 2); ctx.fill();
+
+        // ===== ARMS with outlines =====
         ctx.save();
-        // Right arm
-        ctx.translate(sx + 26, by + 22);
+        ctx.translate(sx + 27, by + 21);
         ctx.rotate(armAngle);
-        ctx.fillStyle = '#FFECD2'; // skin
-        ctx.fillRect(0, -2, 8, 4);
-        // Hand
+        // Arm outline
         ctx.fillStyle = '#FFECD2';
-        ctx.beginPath();
-        ctx.arc(8, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = OW;
+        ctx.fillRect(-1, -3, 10, 5);
+        ctx.strokeRect(-1, -3, 10, 5);
+        // Glove
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath(); ctx.arc(9, -0.5, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(9, -0.5, 4, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
 
         ctx.save();
-        // Left arm
-        ctx.translate(sx + 6, by + 22);
+        ctx.translate(sx + 5, by + 21);
         ctx.rotate(-armAngle);
         ctx.fillStyle = '#FFECD2';
-        ctx.fillRect(-8, -2, 8, 4);
-        ctx.beginPath();
-        ctx.arc(-8, 0, 3, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = OW;
+        ctx.fillRect(-9, -3, 10, 5);
+        ctx.strokeRect(-9, -3, 10, 5);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath(); ctx.arc(-9, -0.5, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(-9, -0.5, 4, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
 
-        // ===== HEAD =====
+        // ===== HEAD with bold outline =====
         ctx.save();
-        ctx.translate(sx + 16, by + 12);
+        ctx.translate(sx + 16, by + 11);
         ctx.rotate(headTilt);
 
-        // Hair back (behind head)
-        ctx.fillStyle = '#FFD700'; // golden blonde
-        ctx.beginPath();
-        ctx.ellipse(0, -1, 13, 13, 0, 0, Math.PI * 2);
-        ctx.fill();
+        // Hair back
+        ctx.fillStyle = '#FFD700';
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = OW;
+        ctx.beginPath(); ctx.ellipse(0, -1, 14, 14, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
         // Face
-        ctx.fillStyle = '#FFECD2'; // fair skin
-        ctx.beginPath();
-        ctx.ellipse(0, 1, 10, 10, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = '#FFECD2';
+        ctx.beginPath(); ctx.ellipse(0, 1, 11, 11, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = OW;
+        ctx.beginPath(); ctx.ellipse(0, 1, 11, 11, 0, 0, Math.PI * 2); ctx.stroke();
 
-        // Hair front - bangs
+        // Bangs
         ctx.fillStyle = '#FFD700';
-        ctx.beginPath();
-        ctx.ellipse(0, -6, 11, 7, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.ellipse(0, -6, 12, 8, 0, Math.PI, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(0, -6, 12, 8, 0, Math.PI, Math.PI * 2); ctx.stroke();
 
-        // Hair highlight streaks
+        // Hair highlights
         ctx.fillStyle = '#FFE44D';
-        ctx.beginPath();
-        ctx.ellipse(-3, -7, 4, 3, -0.2, Math.PI, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(4, -6, 3, 2, 0.3, Math.PI, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.ellipse(-3, -8, 4, 3, -0.2, Math.PI, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(4, -7, 3, 2, 0.3, Math.PI, Math.PI * 2); ctx.fill();
 
-        // Hair sides (ponytail / flowing hair)
+        // Flowing hair sides (speed-reactive)
+        var hairFlow = Math.sin(Game.frameCount * 0.06) * 2 + spd * 0.5;
         ctx.fillStyle = '#FFD700';
-        // Right side flowing hair
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(8, -2);
-        ctx.quadraticCurveTo(14, 4, 12 + Math.sin(Game.frameCount * 0.05) * 2, 14);
-        ctx.quadraticCurveTo(10, 10, 9, 4);
-        ctx.fill();
-        // Left side
+        ctx.moveTo(9, -2);
+        ctx.quadraticCurveTo(16, 5, 14 + hairFlow, 18);
+        ctx.quadraticCurveTo(11, 12, 10, 4);
+        ctx.fill(); ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(-8, -2);
-        ctx.quadraticCurveTo(-14, 4, -12 - Math.sin(Game.frameCount * 0.05) * 2, 14);
-        ctx.quadraticCurveTo(-10, 10, -9, 4);
-        ctx.fill();
+        ctx.moveTo(-9, -2);
+        ctx.quadraticCurveTo(-16, 5, -14 - hairFlow, 18);
+        ctx.quadraticCurveTo(-11, 12, -10, 4);
+        ctx.fill(); ctx.stroke();
 
-        // Eyes - grey-blue
+        // Larger, more expressive eyes (Sonic-style)
         ctx.fillStyle = '#FFFFFF';
-        // Left eye white
-        ctx.beginPath();
-        ctx.ellipse(-4, 0, 3.5, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // Right eye white
-        ctx.beginPath();
-        ctx.ellipse(4, 0, 3.5, 3, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(-4, 0, 4.5, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(4, 0, 4.5, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 
-        // Irises - grey-blue
+        // Irises - larger
         ctx.fillStyle = '#7B9DB7';
-        ctx.beginPath();
-        ctx.arc(-4, 0.5, 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(4, 0.5, 2, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(-4, 0.5, 3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(4, 0.5, 3, 0, Math.PI * 2); ctx.fill();
 
         // Pupils
-        ctx.fillStyle = '#2A2A3A';
-        ctx.beginPath();
-        ctx.arc(-4, 0.5, 1, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(4, 0.5, 1, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = '#1A1A2E';
+        ctx.beginPath(); ctx.arc(-4, 0.5, 1.5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(4, 0.5, 1.5, 0, Math.PI * 2); ctx.fill();
 
-        // Eye shine
+        // Eye shines (bigger, more anime)
         ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath();
-        ctx.arc(-3.2, -0.3, 0.7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(4.8, -0.3, 0.7, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(-3, -1, 1.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(5, -1, 1.2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-5, 2, 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(3, 2, 0.6, 0, Math.PI * 2); ctx.fill();
 
-        // Eyebrows
+        // Determined eyebrows (thicker)
         ctx.strokeStyle = '#D4A017';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(-6, -3);
-        ctx.quadraticCurveTo(-4, -4.5, -2, -3);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(2, -3);
-        ctx.quadraticCurveTo(4, -4.5, 6, -3);
-        ctx.stroke();
+        ctx.lineWidth = 1.8;
+        if (this.state === 'sprint' || this.state === 'skid') {
+            // Determined look
+            ctx.beginPath(); ctx.moveTo(-7, -4); ctx.lineTo(-2, -5); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(2, -5); ctx.lineTo(7, -4); ctx.stroke();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(-7, -4); ctx.quadraticCurveTo(-4, -6, -1, -4); ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(1, -4); ctx.quadraticCurveTo(4, -6, 7, -4); ctx.stroke();
+        }
 
         // Pink cheeks
         ctx.fillStyle = 'rgba(255,150,150,0.5)';
-        ctx.beginPath();
-        ctx.ellipse(-7, 3, 2.5, 1.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.ellipse(7, 3, 2.5, 1.5, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.ellipse(-8, 4, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(8, 4, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
 
-        // Mouth - confident smile
+        // Mouth
         if (this.state === 'hurt') {
-            // Frown when hurt
-            ctx.strokeStyle = '#E07070';
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.arc(0, 7, 3, Math.PI * 1.2, Math.PI * 1.8);
-            ctx.stroke();
+            ctx.strokeStyle = '#E07070'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(0, 7, 3, Math.PI * 1.2, Math.PI * 1.8); ctx.stroke();
         } else if (this.state === 'victory' || this.state === 'dance') {
-            // Big happy smile
             ctx.fillStyle = '#FF8888';
-            ctx.beginPath();
-            ctx.arc(0, 4, 4, 0, Math.PI);
-            ctx.fill();
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(-2, 4, 4, 2);
+            ctx.beginPath(); ctx.arc(0, 5, 5, 0, Math.PI); ctx.fill();
+            ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(0, 5, 5, 0, Math.PI); ctx.stroke();
+            ctx.fillStyle = '#FFF'; ctx.fillRect(-3, 5, 6, 2);
+        } else if (this.state === 'sprint') {
+            // Excited grin
+            ctx.fillStyle = '#FF8888';
+            ctx.beginPath(); ctx.arc(1, 5, 4, -0.2, Math.PI + 0.2); ctx.fill();
+            ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(1, 5, 4, -0.2, Math.PI + 0.2); ctx.stroke();
         } else {
-            // Confident smile
-            ctx.strokeStyle = '#E08080';
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.arc(0, 4, 3, 0.1, Math.PI - 0.1);
-            ctx.stroke();
+            ctx.strokeStyle = '#D06080'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(0, 5, 3.5, 0.1, Math.PI - 0.1); ctx.stroke();
         }
 
-        // Small nose
+        // Nose
         ctx.fillStyle = '#F0D5B8';
-        ctx.beginPath();
-        ctx.arc(0, 2, 1, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(0, 2.5, 1.2, 0, Math.PI * 2); ctx.fill();
 
-        ctx.restore(); // end head transform
+        ctx.restore(); // end head
+
+        ctx.restore(); // end body lean
+
+        // ===== Speed lines (drawn behind/around character at high speed) =====
+        if (spd > this.TOP_SPEED * 0.8 && this.onGround) {
+            var lineAlpha = Math.min((spd - this.TOP_SPEED * 0.8) / 4, 0.6);
+            ctx.strokeStyle = 'rgba(255,255,255,' + lineAlpha + ')';
+            ctx.lineWidth = 1.5;
+            for (var sl = 0; sl < 4; sl++) {
+                var ly = sy + 8 + sl * 12;
+                var lx = sx + 16 - f * 18;
+                ctx.beginPath();
+                ctx.moveTo(lx, ly);
+                ctx.lineTo(lx - f * (12 + spd * 2 + Math.random() * 5), ly);
+                ctx.stroke();
+            }
+        }
 
         // ===== Dance effect: sparkle ring =====
         if (this.state === 'dance') {
             var dAngle = Game.frameCount * 0.15;
-            for (var s = 0; s < 6; s++) {
-                var sa = dAngle + (s / 6) * Math.PI * 2;
-                var sr = 24 + Math.sin(Game.frameCount * 0.1 + s) * 4;
+            for (var s = 0; s < 8; s++) {
+                var sa = dAngle + (s / 8) * Math.PI * 2;
+                var sr = 28 + Math.sin(Game.frameCount * 0.1 + s) * 5;
                 var spx = sx + 16 + Math.cos(sa) * sr;
-                var spy = by + 24 + Math.sin(sa) * sr;
+                var spy = sy + bounce + 24 + Math.sin(sa) * sr;
                 ctx.fillStyle = s % 2 === 0 ? '#FFD700' : '#FF69B4';
-                _drawStar(ctx, spx, spy, 3, 4);
+                _drawStar(ctx, spx, spy, 4, 5);
             }
         }
 
-        // ===== Victory effect: floating stars =====
+        // ===== Victory effect =====
         if (this.state === 'victory') {
-            for (var s = 0; s < 4; s++) {
-                var va = Game.frameCount * 0.08 + (s / 4) * Math.PI * 2;
-                var vr = 30;
+            for (var s = 0; s < 5; s++) {
+                var va = Game.frameCount * 0.08 + (s / 5) * Math.PI * 2;
+                var vr = 34;
                 var vpx = sx + 16 + Math.cos(va) * vr;
-                var vpy = by + 10 + Math.sin(va * 0.5) * 10 - 10;
+                var vpy = sy + bounce + 10 + Math.sin(va * 0.5) * 12 - 10;
                 ctx.fillStyle = '#FFD700';
-                _drawStar(ctx, vpx, vpy, 3, 5);
+                _drawStar(ctx, vpx, vpy, 4, 5);
             }
         }
 
@@ -974,6 +1181,10 @@ function _drawStar(ctx, cx, cy, radius, points) {
 
     window.addEventListener('keyup', function (e) {
         Game.keys[e.key] = false;
+        // Variable jump height: release jump key to cut jump short
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') {
+            Player.jumpHeld = false;
+        }
     });
 
     // Clear keys if window loses focus
